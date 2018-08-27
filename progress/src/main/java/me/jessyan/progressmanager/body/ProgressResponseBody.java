@@ -43,16 +43,18 @@ public class ProgressResponseBody extends ResponseBody {
 
     protected Handler mHandler;
     protected int mRefreshTime;
+    private final boolean mForceUiThreadCallbacks;
     protected final ResponseBody mDelegate;
     protected final ProgressListener[] mListeners;
     protected final ProgressInfo mProgressInfo;
     private BufferedSource mBufferedSource;
 
-    public ProgressResponseBody(Handler handler, ResponseBody responseBody, List<ProgressListener> listeners, int refreshTime) {
+    public ProgressResponseBody(Handler handler, ResponseBody responseBody, List<ProgressListener> listeners, int refreshTime, boolean forceUiThreadCallbacks) {
         this.mDelegate = responseBody;
         this.mListeners = listeners.toArray(new ProgressListener[listeners.size()]);
         this.mHandler = handler;
         this.mRefreshTime = refreshTime;
+        this.mForceUiThreadCallbacks = forceUiThreadCallbacks;
         this.mProgressInfo = new ProgressInfo(System.currentTimeMillis());
     }
 
@@ -107,24 +109,32 @@ public class ProgressResponseBody extends ResponseBody {
                         final long finalIntervalTime = curTime - lastRefreshTime;
                         for (int i = 0; i < mListeners.length; i++) {
                             final ProgressListener listener = mListeners[i];
-                            mHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    // Runnable 里的代码是通过 Handler 执行在主线程的,外面代码可能执行在其他线程
-                                    // 所以我必须使用 final ,保证在 Runnable 执行前使用到的变量,在执行时不会被修改
-                                    mProgressInfo.setEachBytes(finalBytesRead != -1 ? finalTempSize : -1);
-                                    mProgressInfo.setCurrentbytes(finalTotalBytesRead);
-                                    mProgressInfo.setIntervalTime(finalIntervalTime);
-                                    mProgressInfo.setFinish(finalBytesRead == -1 && finalTotalBytesRead == mProgressInfo.getContentLength());
-                                    listener.onProgress(mProgressInfo);
-                                }
-                            });
+                            if (mForceUiThreadCallbacks) {
+                                mHandler.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        // Runnable 里的代码是通过 Handler 执行在主线程的,外面代码可能执行在其他线程
+                                        // 所以我必须使用 final ,保证在 Runnable 执行前使用到的变量,在执行时不会被修改
+                                        notifyListener(listener, finalBytesRead, finalTempSize, finalTotalBytesRead, finalIntervalTime);
+                                    }
+                                });
+                            } else {
+                                notifyListener(listener, finalBytesRead, finalTempSize, finalTotalBytesRead, finalIntervalTime);
+                            }
                         }
                         lastRefreshTime = curTime;
                         tempSize = 0;
                     }
                 }
                 return bytesRead;
+            }
+
+            private void notifyListener(ProgressListener listener, long bytesRead, long tempSize, long totalBytesRead, long intervalTime) {
+                mProgressInfo.setEachBytes(bytesRead != -1 ? tempSize : -1);
+                mProgressInfo.setCurrentbytes(totalBytesRead);
+                mProgressInfo.setIntervalTime(intervalTime);
+                mProgressInfo.setFinish(bytesRead == -1 && totalBytesRead == mProgressInfo.getContentLength());
+                listener.onProgress(mProgressInfo);
             }
         };
     }

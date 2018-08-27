@@ -65,6 +65,7 @@ public final class ProgressManager {
     private final Map<String, List<ProgressListener>> mResponseListeners = new WeakHashMap<>();
     private final Handler mHandler; //所有监听器在 Handler 中被执行,所以可以保证所有监听器在主线程中被执行
     private final Interceptor mInterceptor;
+    private final boolean mForceUiThreadCallbacks;
     private int mRefreshTime = DEFAULT_REFRESH_TIME; //进度刷新时间(单位ms),避免高频率调用
 
     private static volatile ProgressManager mProgressManager;
@@ -89,7 +90,8 @@ public final class ProgressManager {
     }
 
 
-    private ProgressManager() {
+    private ProgressManager(boolean forceUiThreadCallbacks) {
+        this.mForceUiThreadCallbacks = forceUiThreadCallbacks;
         this.mHandler = new Handler(Looper.getMainLooper());
         this.mInterceptor = new Interceptor() {
             @Override
@@ -100,14 +102,19 @@ public final class ProgressManager {
     }
 
 
-    public static final ProgressManager getInstance() {
+    public static ProgressManager getInstance() {
+        return getInstance(true);
+    }
+
+
+    public static final ProgressManager getInstance(boolean forceUiThreadCallbacks) {
         if (mProgressManager == null) {
             if (!DEPENDENCY_OKHTTP) { //使用本管理器必须依赖 Okhttp
                 throw new IllegalStateException("Must be dependency Okhttp");
             }
             synchronized (ProgressManager.class) {
                 if (mProgressManager == null) {
-                    mProgressManager = new ProgressManager();
+                    mProgressManager = new ProgressManager(forceUiThreadCallbacks);
                 }
             }
         }
@@ -212,7 +219,7 @@ public final class ProgressManager {
         if (mRequestListeners.containsKey(key)) {
             List<ProgressListener> listeners = mRequestListeners.get(key);
             return request.newBuilder()
-                    .method(request.method(), new ProgressRequestBody(mHandler, request.body(), listeners, mRefreshTime))
+                    .method(request.method(), new ProgressRequestBody(mHandler, request.body(), listeners, mRefreshTime, mForceUiThreadCallbacks))
                     .build();
         }
         return request;
@@ -266,7 +273,7 @@ public final class ProgressManager {
         if (mResponseListeners.containsKey(key)) {
             List<ProgressListener> listeners = mResponseListeners.get(key);
             return response.newBuilder()
-                    .body(new ProgressResponseBody(mHandler, response.body(), listeners, mRefreshTime))
+                    .body(new ProgressResponseBody(mHandler, response.body(), listeners, mRefreshTime, mForceUiThreadCallbacks))
                     .build();
         }
         return response;
